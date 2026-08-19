@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: terraform + security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: fmt
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - name: init
+        run: terraform -chdir=terraform init -backend=false
+
+      - name: validate
+        run: terraform -chdir=terraform validate
+
+      # Dit is het DevSecOps-deel: de infra wordt gescand voor er iets uitrolt.
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          quiet: true
+
+  python:
+    name: lambda tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: pip install -r lambda/requirements.txt
+      - name: test
+        run: pytest lambda -q
