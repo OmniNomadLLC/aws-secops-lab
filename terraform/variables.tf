@@ -16,3 +16,9 @@ variable "alert_endpoint" {
   sensitive   = true
   default     = ""
 }
+
+variable "budget_alert_email" {
+  description = "Ontvanger van budgetalerts. Via TF_VAR_budget_alert_email, niet in de repo."
+  type        = string
+  sensitive   = true
+}

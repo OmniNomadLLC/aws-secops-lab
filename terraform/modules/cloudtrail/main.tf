@@ -35,7 +35,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "trail_logs" {
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.cloudtrail.arn
     }
     bucket_key_enabled = true
   }
@@ -142,6 +143,7 @@ resource "aws_s3_bucket_policy" "trail_logs" {
 resource "aws_cloudwatch_log_group" "trail" {
   name              = "/aws/cloudtrail/${var.project_name}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.cloudtrail.arn
 }
 
 data "aws_iam_policy_document" "trail_assume" {
@@ -172,6 +174,10 @@ data "aws_iam_policy_document" "trail_to_logs" {
       "logs:CreateLogStream",
       "logs:PutLogEvents",
     ]
+    # CloudTrail maakt logstreams met dynamische namen aan; specifieker dan
+    # "alle streams binnen deze ene loggroep" kan dus niet. De echte grens is
+    # de loggroep, en die is exact.
+    #tfsec:ignore:aws-iam-no-policy-wildcards
     resources = ["${aws_cloudwatch_log_group.trail.arn}:log-stream:*"]
   }
 }
@@ -202,6 +208,9 @@ resource "aws_cloudtrail" "main" {
 
   # Digest-bestanden waarmee aantoonbaar is dat logs niet zijn aangepast.
   enable_log_file_validation = true
+
+  kms_key_id     = aws_kms_key.cloudtrail.arn
+  sns_topic_name = aws_sns_topic.trail.arn
 
   cloud_watch_logs_group_arn = "${aws_cloudwatch_log_group.trail.arn}:*"
   cloud_watch_logs_role_arn  = aws_iam_role.trail_to_logs.arn

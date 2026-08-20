@@ -100,6 +100,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
 # pas vrij als de apply klaar is. De naam LockID en het type string liggen vast,
 # dat is geen keuze maar een eis van Terraform.
 resource "aws_dynamodb_table" "tflock" {
+  # checkov:skip=CKV_AWS_119: de locktable bevat alleen lock-ID's en state-checksums, geen gevoelige data; een tweede CMK ($1/mnd) voegt hier geen echte beveiliging toe
   name         = local.lock_table_name
   billing_mode = "PAY_PER_REQUEST" # geen vaste capaciteit reserveren, je betaalt per lock
   hash_key     = "LockID"

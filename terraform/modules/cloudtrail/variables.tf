@@ -4,7 +4,7 @@ variable "project_name" {
 }
 
 variable "log_retention_days" {
-  description = "Bewaartermijn voor CloudWatch-logs en de S3-trail-logs. Kort houden: dit is een lab, geen compliance-archief."
+  description = "Bewaartermijn voor CloudWatch-logs en de S3-trail-logs. 365 om aan CKV_AWS_338 te voldoen; kost niets extra omdat het lab ruim daarvoor wordt vernietigd."
   type        = number
-  default     = 30
+  default     = 365
 }
