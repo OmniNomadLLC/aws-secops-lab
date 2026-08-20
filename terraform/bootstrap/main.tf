@@ -16,7 +16,16 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "tfstate" {
+  # checkov:skip=CKV_AWS_144: single-region lab; replicatie verdubbelt kosten zonder DR-eis, alles gaat eind van de week door terraform destroy
+  # checkov:skip=CKV_AWS_18: alleen de deploy-user en CI raken deze bucket; een access-log-keten in de bootstrap vergt een extra bucket die zelf ongelogd is
   bucket = local.state_bucket_name
+}
+
+# EventBridge-notificaties: gratis, en maakt state-wijzigingen zichtbaar als
+# events waar detectieregels op kunnen reageren.
+resource "aws_s3_bucket_notification" "tfstate" {
+  bucket      = aws_s3_bucket.tfstate.id
+  eventbridge = true
 }
 
 # Versioning: elke apply overschrijft terraform.tfstate. Zonder versioning is een

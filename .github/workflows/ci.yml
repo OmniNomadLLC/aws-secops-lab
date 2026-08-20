@@ -52,4 +52,6 @@ jobs:
       - name: install
         run: pip install -r lambda/requirements.txt
       - name: test
-        run: pytest lambda -q
+        # Exit-code 5 = "geen tests gevonden": geldig tot de Lambda er is (dag 2).
+        # Echte testfouten (exit 1) breken de build gewoon.
+        run: pytest lambda -q || { rc=$?; [ $rc -eq 5 ] && echo "nog geen tests"; [ $rc -eq 5 ]; }

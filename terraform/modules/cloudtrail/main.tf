@@ -15,6 +15,7 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "trail_logs" {
+  # checkov:skip=CKV_AWS_144: single-region lab; replicatie verdubbelt kosten zonder DR-eis
   bucket = "${var.project_name}-cloudtrail-${local.account_id}"
 
   # Lab: aan het eind van de week gaat alles door terraform destroy, ook als er
@@ -57,6 +58,11 @@ resource "aws_s3_bucket_ownership_controls" "trail_logs" {
   rule {
     object_ownership = "BucketOwnerEnforced"
   }
+}
+
+resource "aws_s3_bucket_notification" "trail_logs" {
+  bucket      = aws_s3_bucket.trail_logs.id
+  eventbridge = true
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "trail_logs" {

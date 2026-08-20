@@ -4,6 +4,7 @@
 # op; hier eindigt de loggingketen bewust.
 #tfsec:ignore:aws-s3-enable-bucket-logging
 resource "aws_s3_bucket" "access_logs" {
+  # checkov:skip=CKV_AWS_144: single-region lab; replicatie verdubbelt kosten zonder DR-eis
   bucket        = "${var.project_name}-s3-access-logs-${local.account_id}"
   force_destroy = true
 }
@@ -96,6 +97,11 @@ data "aws_iam_policy_document" "access_logs_bucket" {
       values   = [aws_s3_bucket.trail_logs.arn]
     }
   }
+}
+
+resource "aws_s3_bucket_notification" "access_logs" {
+  bucket      = aws_s3_bucket.access_logs.id
+  eventbridge = true
 }
 
 resource "aws_s3_bucket_policy" "access_logs" {
