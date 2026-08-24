@@ -8,6 +8,7 @@ handmatige invokes; EventBridge zelf doet er niets mee.
 import logging
 
 from .alerts import send_alert
+from .audit import run_audits
 from .enrich import current_public_state
 from .rules import evaluate
 
@@ -16,13 +17,19 @@ logger.setLevel(logging.INFO)
 
 
 def handler(event: dict, context=None) -> dict:
-    # EventBridge stopt het CloudTrail-record in "detail"; bij een directe
-    # test-invoke kan er ook een kaal record binnenkomen, dan pakken we dat.
-    detail = event.get("detail", event)
-
-    findings = evaluate(detail)
+    # Twee aanvliegroutes: de dagelijkse schedule (audit-modus) en losse
+    # CloudTrail-events via de patroonrules (event-modus).
+    if event.get("detail-type") == "Scheduled Event":
+        logger.info("Audit-modus (scheduled event)")
+        findings = run_audits()
+    else:
+        # EventBridge stopt het CloudTrail-record in "detail"; bij een directe
+        # test-invoke kan er ook een kaal record binnenkomen, dan pakken we dat.
+        detail = event.get("detail", event)
+        findings = evaluate(detail)
     if not findings:
-        logger.info("Geen regels geraakt voor eventName=%s", detail.get("eventName"))
+        logger.info("Geen regels geraakt (%s)",
+                    event.get("detail-type") or (event.get("detail", event)).get("eventName"))
         return {"findings": 0, "alerts_sent": 0}
 
     alerts_sent = 0

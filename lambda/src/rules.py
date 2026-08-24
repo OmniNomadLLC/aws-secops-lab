@@ -25,12 +25,10 @@ def _actor(detail: dict) -> str:
     return identity.get("arn", identity.get("principalId", "onbekend"))
 
 
-def _base_finding(detail: dict, **kwargs) -> Finding:
-    """De velden die elke S3-finding deelt; de regel vult titel/severity/details aan."""
-    params = detail.get("requestParameters") or {}
+def event_finding(detail: dict, **kwargs) -> Finding:
+    """De velden die elke event-finding deelt (dader, tijd, regio, account);
+    de regel levert rule_id, severity, titel, resource en details."""
     return Finding(
-        rule_id="S3-PUBLIC-001",
-        resource=params.get("bucketName", "onbekend"),
         actor=_actor(detail),
         event_name=detail.get("eventName", ""),
         event_time=detail.get("eventTime", ""),
@@ -60,8 +58,10 @@ def _check_put_bucket_acl(detail: dict) -> Finding | None:
 
     if canned not in PUBLIC_CANNED_ACLS and not public_grants:
         return None
-    return _base_finding(
+    return event_finding(
         detail,
+        rule_id="S3-PUBLIC-001",
+        resource=params.get("bucketName", "onbekend"),
         severity="HIGH",
         title="S3-bucket-ACL opengezet voor iedereen",
         details={"canned_acl": canned, "public_grants": public_grants},
@@ -107,8 +107,10 @@ def _check_put_bucket_policy(detail: dict) -> Finding | None:
     open_statements = wildcard_principal_statements(params.get("bucketPolicy"))
     if not open_statements:
         return None
-    return _base_finding(
+    return event_finding(
         detail,
+        rule_id="S3-PUBLIC-001",
+        resource=params.get("bucketName", "onbekend"),
         severity="HIGH",
         title="S3-bucketpolicy staat Principal * toe",
         details={"open_statements": open_statements},
@@ -118,8 +120,11 @@ def _check_put_bucket_policy(detail: dict) -> Finding | None:
 def _check_delete_public_access_block(detail: dict) -> Finding | None:
     """Pad 3: de vangrail weghalen is altijd meldenswaardig, ook als de bucket
     daarna (nog) niet publiek is. Dit is precies de stap die aan een lek voorafgaat."""
-    return _base_finding(
+    params = detail.get("requestParameters") or {}
+    return event_finding(
         detail,
+        rule_id="S3-PUBLIC-001",
+        resource=params.get("bucketName", "onbekend"),
         severity="MEDIUM",
         title="Public-access-block van S3-bucket verwijderd",
     )
@@ -141,8 +146,10 @@ def _check_put_public_access_block(detail: dict) -> Finding | None:
     disabled = [key for key, value in flags.items() if value is False]
     if not disabled:
         return None
-    return _base_finding(
+    return event_finding(
         detail,
+        rule_id="S3-PUBLIC-001",
+        resource=params.get("bucketName", "onbekend"),
         severity="MEDIUM",
         title="Public-access-block van S3-bucket verzwakt",
         details={"disabled_flags": disabled},
@@ -170,8 +177,132 @@ def rule_s3_public_bucket(detail: dict) -> Finding | None:
     return check(detail) if check else None
 
 
-# Dag 3+: hier komen de volgende regels bij (IAM-keys zonder MFA, root-gebruik, ...).
-RULES = [rule_s3_public_bucket]
+def rule_root_activity(detail: dict) -> Finding | None:
+    """IAM-ROOT-002: elk handmatig gebruik van het root-account.
+
+    Root hoort in de kluis te liggen; elke actie ermee is meldenswaardig.
+    AwsServiceEvents worden overgeslagen: dat zijn acties die AWS zelf
+    namens het account uitvoert (bv. een key-rotatie van een managed
+    service), geen mens die met root-credentials werkt.
+    """
+    identity = detail.get("userIdentity") or {}
+    if identity.get("type") != "Root":
+        return None
+    if detail.get("eventType") == "AwsServiceEvent" or identity.get("invokedBy"):
+        return None
+    return event_finding(
+        detail,
+        rule_id="IAM-ROOT-002",
+        severity="HIGH",
+        title="Root-account gebruikt",
+        resource=identity.get("arn", "root"),
+        details={
+            "event_type": detail.get("eventType"),
+            "mfa_used": (identity.get("sessionContext") or {})
+            .get("attributes", {})
+            .get("mfaAuthenticated"),
+            "source_ip": detail.get("sourceIPAddress"),
+        },
+    )
+
+
+# Poorten waarop "open naar de wereld" vrijwel altijd fout is: beheer (SSH/RDP),
+# databases en caches. HTTP/HTTPS (80/443) staan er bewust niet in: dat is
+# voor een webserver legitiem en zou alleen ruis geven.
+SENSITIVE_PORTS = {22, 3389, 3306, 5432, 6379, 9200, 27017}
+WORLD_CIDRS = {"0.0.0.0/0", "::/0"}
+
+
+def _world_open_permissions(params: dict) -> list[dict]:
+    """AuthorizeSecurityGroupIngress-items die vanaf het hele internet mogen."""
+    items = ((params.get("ipPermissions") or {}).get("items")) or []
+    hits = []
+    for perm in items:
+        cidrs = [r.get("cidrIp") for r in ((perm.get("ipRanges") or {}).get("items") or [])]
+        cidrs += [r.get("cidrIpv6") for r in ((perm.get("ipv6Ranges") or {}).get("items") or [])]
+        world = [c for c in cidrs if c in WORLD_CIDRS]
+        if not world:
+            continue
+        protocol = str(perm.get("ipProtocol", ""))
+        from_port = perm.get("fromPort")
+        to_port = perm.get("toPort")
+        # Protocol -1 = al het verkeer; poorten zijn dan niet van toepassing.
+        all_traffic = protocol == "-1"
+        sensitive = all_traffic or (
+            from_port is not None
+            and to_port is not None
+            and any(from_port <= p <= to_port for p in SENSITIVE_PORTS)
+        )
+        hits.append({
+            "protocol": protocol,
+            "from_port": from_port,
+            "to_port": to_port,
+            "cidrs": world,
+            "sensitive": sensitive,
+        })
+    return hits
+
+
+def rule_sg_open_to_world(detail: dict) -> Finding | None:
+    """EC2-SG-003: security-group-regel opengezet voor 0.0.0.0/0 of ::/0.
+
+    HIGH als er een gevoelige poort (of al het verkeer) in zit, anders MEDIUM:
+    ook een onschuldig ogende wereld-open poort is het melden waard, maar hoeft
+    niemand wakker voor te bellen.
+    """
+    if detail.get("eventName") != "AuthorizeSecurityGroupIngress":
+        return None
+    params = detail.get("requestParameters") or {}
+    hits = _world_open_permissions(params)
+    if not hits:
+        return None
+    return event_finding(
+        detail,
+        rule_id="EC2-SG-003",
+        severity="HIGH" if any(h["sensitive"] for h in hits) else "MEDIUM",
+        title="Security group opengezet naar het internet",
+        resource=params.get("groupId", "onbekend"),
+        details={"world_open": hits},
+    )
+
+
+# CloudTrail-calls die de detectie zelf blind kunnen maken. Stoppen of
+# verwijderen is CRITICAL (logging is dan wég); aanpassen is HIGH (kan
+# een verkapte verzwakking zijn, bv. management events uitzetten).
+TRAIL_TAMPER_EVENTS = {
+    "StopLogging": "CRITICAL",
+    "DeleteTrail": "CRITICAL",
+    "UpdateTrail": "HIGH",
+    "PutEventSelectors": "HIGH",
+}
+
+
+def rule_cloudtrail_tampering(detail: dict) -> Finding | None:
+    """CT-TAMPER-004: iemand zit aan de audit-logging zelf.
+
+    Dit is de belangrijkste regel van allemaal: de eerste stap van een
+    aanvaller met genoeg rechten is het uitzetten van de camera's.
+    """
+    severity = TRAIL_TAMPER_EVENTS.get(detail.get("eventName", ""))
+    if not severity:
+        return None
+    params = detail.get("requestParameters") or {}
+    return event_finding(
+        detail,
+        rule_id="CT-TAMPER-004",
+        severity=severity,
+        title="CloudTrail-logging gestopt of aangepast",
+        resource=params.get("name", "onbekend"),
+        details={"request_parameters": params},
+    )
+
+
+RULES = [
+    rule_s3_public_bucket,
+    rule_root_activity,
+    rule_sg_open_to_world,
+    rule_cloudtrail_tampering,
+]
 
 
 def evaluate(detail: dict) -> list[Finding]:
