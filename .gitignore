@@ -21,3 +21,4 @@ venv/
 .env
 *.pem
 credentials
+terraform/modules/detection/.build/

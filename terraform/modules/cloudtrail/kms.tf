@@ -57,10 +57,15 @@ data "aws_iam_policy_document" "cmk" {
       identifiers = ["logs.${data.aws_region.current.name}.amazonaws.com"]
     }
 
+    # ArnLike i.p.v. ArnEquals zodat de Lambda-loggroepen van het lab dezelfde
+    # CMK kunnen gebruiken; één key voor het hele lab houdt de vaste kosten op $1/mnd.
     condition {
-      test     = "ArnEquals"
+      test     = "ArnLike"
       variable = "kms:EncryptionContext:aws:logs:arn"
-      values   = ["arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/aws/cloudtrail/${var.project_name}"]
+      values = [
+        "arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/aws/cloudtrail/${var.project_name}",
+        "arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/aws/lambda/${var.project_name}-*",
+      ]
     }
   }
 

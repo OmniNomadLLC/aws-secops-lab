@@ -97,13 +97,13 @@ def policy_scoped_detail():
 
 @pytest.fixture
 def delete_pab_detail():
-    return _base_detail("DeletePublicAccessBlock", {"bucketName": "leaky-bucket"})
+    return _base_detail("DeleteBucketPublicAccessBlock", {"bucketName": "leaky-bucket"})
 
 
 @pytest.fixture
 def weakened_pab_detail():
     """PutPublicAccessBlock waarbij twee van de vier vlaggen uitgaan."""
-    return _base_detail("PutPublicAccessBlock", {
+    return _base_detail("PutBucketPublicAccessBlock", {
         "bucketName": "leaky-bucket",
         "PublicAccessBlockConfiguration": {
             "BlockPublicAcls": False,
@@ -117,7 +117,7 @@ def weakened_pab_detail():
 @pytest.fixture
 def full_pab_detail():
     """PutPublicAccessBlock met alles aan: dit is juist goed, géén finding."""
-    return _base_detail("PutPublicAccessBlock", {
+    return _base_detail("PutBucketPublicAccessBlock", {
         "bucketName": "tidy-bucket",
         "PublicAccessBlockConfiguration": {
             "BlockPublicAcls": True,

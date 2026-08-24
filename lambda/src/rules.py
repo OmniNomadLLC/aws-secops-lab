@@ -151,10 +151,16 @@ def _check_put_public_access_block(detail: dict) -> Finding | None:
 
 # eventName -> checker. De handler kijkt alleen hierin; wat er niet in staat
 # wordt genegeerd (de EventBridge-rule zou het ook niet moeten doorlaten).
+# Let op: CloudTrail noemt de public-access-block-calls anders dan de S3-API
+# (PutBucketPublicAccessBlock i.p.v. PutPublicAccessBlock); empirisch
+# vastgesteld op 2026-08-24 via lookup-events. Beide varianten staan erin
+# zodat de regel ook werkt als AWS de naamgeving ooit gelijktrekt.
 S3_PUBLIC_CHECKS = {
     "PutBucketAcl": _check_put_bucket_acl,
     "PutBucketPolicy": _check_put_bucket_policy,
+    "DeleteBucketPublicAccessBlock": _check_delete_public_access_block,
     "DeletePublicAccessBlock": _check_delete_public_access_block,
+    "PutBucketPublicAccessBlock": _check_put_public_access_block,
     "PutPublicAccessBlock": _check_put_public_access_block,
 }
 

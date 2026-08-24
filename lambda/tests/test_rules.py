@@ -64,3 +64,10 @@ def test_evaluate_collects_findings_and_captures_actor(policy_public_detail):
     findings = evaluate(policy_public_detail)
     assert len(findings) == 1
     assert findings[0].actor == "arn:aws:iam::111111111111:user/test-user"
+
+
+def test_api_style_event_name_alias_still_matches(weakened_pab_detail):
+    # CloudTrail zegt PutBucketPublicAccessBlock; de kale API-naam blijft
+    # als alias werken (zie de comment bij S3_PUBLIC_CHECKS).
+    weakened_pab_detail["eventName"] = "PutPublicAccessBlock"
+    assert rule_s3_public_bucket(weakened_pab_detail) is not None
