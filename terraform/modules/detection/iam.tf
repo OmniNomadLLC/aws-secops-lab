@@ -70,6 +70,28 @@ data "aws_iam_policy_document" "lambda_permissions" {
     resources = [aws_sqs_queue.dlq.arn]
   }
 
+  # De dagelijkse audit (IAM-KEY-005): keys en MFA-status van alle users
+  # kunnen lezen. Read-only metadata; hiermee kan geen key of policy
+  # aangemaakt, gewijzigd of gebruikt worden.
+  statement {
+    sid = "AuditIamKeys"
+    actions = [
+      "iam:ListAccessKeys",
+      "iam:ListMFADevices",
+    ]
+    #tfsec:ignore:aws-iam-no-policy-wildcards -- de audit moet per definitie ALLE users kunnen beoordelen; scherper scopen zou precies de onbekende users uitsluiten die we zoeken
+    resources = ["arn:aws:iam::${local.account_id}:user/*"]
+  }
+
+  statement {
+    sid     = "AuditIamListUsers"
+    actions = ["iam:ListUsers"]
+    # iam:ListUsers ondersteunt geen resource-scoping (lijst-actie op
+    # accountniveau); "*" is hier het minimum dat werkt.
+    #tfsec:ignore:aws-iam-no-policy-wildcards
+    resources = ["*"]
+  }
+
   # X-Ray-tracing (tracing_config Active). Deze acties ondersteunen geen
   # resource-scoping: traces zijn geen adresseerbare resource, dus "*" is
   # hier het minimum dat werkt, niet een gemakzuchtige wildcard.

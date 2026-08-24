@@ -8,9 +8,12 @@ output "function_arn" {
   value       = aws_lambda_function.detection.arn
 }
 
-output "event_rule_arn" {
-  description = "De EventBridge-rule die S3-calls naar de Lambda stuurt."
-  value       = aws_cloudwatch_event_rule.s3_public.arn
+output "event_rule_arns" {
+  description = "Alle EventBridge-rules die events naar de Lambda sturen."
+  value = merge(
+    { for key, rule in aws_cloudwatch_event_rule.detection : key => rule.arn },
+    { daily-audit = aws_cloudwatch_event_rule.daily_audit.arn },
+  )
 }
 
 output "dlq_url" {

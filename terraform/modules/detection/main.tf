@@ -89,45 +89,135 @@ resource "aws_lambda_function" "detection" {
 }
 
 # ---------------------------------------------------------------------------
-# EventBridge: het grove filter. Alleen de vier S3-calls waar regel
-# S3-PUBLIC-001 iets mee kan bereiken de Lambda; de rest wordt bij AWS
-# al weggefilterd en kost ons dus geen invocaties.
+# EventBridge: het grove filter. Alleen calls waar een regel iets mee kan
+# bereiken de Lambda; de rest wordt bij AWS al weggefilterd en kost ons dus
+# geen invocaties. Eén map met patronen, for_each maakt er rules van:
+# een regel toevoegen = een entry toevoegen.
+#
+# Beperking (bewust geaccepteerd): globale events zoals console-sign-ins en
+# IAM-calls landen op de EventBridge-bus in us-east-1, niet hier. De
+# root-rule vangt dus root-API-calls in deze regio; cross-region forwarding
+# vanaf us-east-1 staat op de lijst voor later.
 # ---------------------------------------------------------------------------
 
-resource "aws_cloudwatch_event_rule" "s3_public" {
-  name        = "${var.project_name}-s3-public-events"
-  description = "CloudTrail S3-calls die een bucket publiek kunnen maken."
-
-  event_pattern = jsonencode({
-    source      = ["aws.s3"]
-    detail-type = ["AWS API Call via CloudTrail"]
-    detail = {
-      eventSource = ["s3.amazonaws.com"]
-      # CloudTrail gebruikt de "Bucket"-variant van de public-access-block-namen
-      # (≠ de S3-API-naam); de kale variant staat er ook in voor het geval AWS
-      # de naamgeving gelijktrekt. Extra patroonwaarden kosten niets.
-      eventName = [
-        "PutBucketAcl",
-        "PutBucketPolicy",
-        "DeleteBucketPublicAccessBlock",
-        "DeletePublicAccessBlock",
-        "PutBucketPublicAccessBlock",
-        "PutPublicAccessBlock",
-      ]
+locals {
+  event_rules = {
+    "s3-public" = {
+      description = "CloudTrail S3-calls die een bucket publiek kunnen maken."
+      pattern = {
+        source      = ["aws.s3"]
+        detail-type = ["AWS API Call via CloudTrail"]
+        detail = {
+          eventSource = ["s3.amazonaws.com"]
+          # CloudTrail gebruikt de "Bucket"-variant van de public-access-block-
+          # namen (≠ de S3-API-naam); de kale variant blijft als alias staan.
+          eventName = [
+            "PutBucketAcl",
+            "PutBucketPolicy",
+            "DeleteBucketPublicAccessBlock",
+            "DeletePublicAccessBlock",
+            "PutBucketPublicAccessBlock",
+            "PutPublicAccessBlock",
+          ]
+        }
+      }
     }
-  })
+    "root-activity" = {
+      description = "Elke actie van het root-account (regionale events; zie beperking hierboven)."
+      pattern = {
+        detail-type = ["AWS API Call via CloudTrail", "AWS Console Sign In via CloudTrail"]
+        detail = {
+          userIdentity = { type = ["Root"] }
+        }
+      }
+    }
+    "sg-world-open" = {
+      description = "Security-group-regels die naar het internet opengezet worden."
+      pattern = {
+        source      = ["aws.ec2"]
+        detail-type = ["AWS API Call via CloudTrail"]
+        detail = {
+          eventSource = ["ec2.amazonaws.com"]
+          eventName   = ["AuthorizeSecurityGroupIngress"]
+        }
+      }
+    }
+    "trail-tamper" = {
+      description = "CloudTrail-logging die gestopt, verwijderd of aangepast wordt."
+      pattern = {
+        source      = ["aws.cloudtrail"]
+        detail-type = ["AWS API Call via CloudTrail"]
+        detail = {
+          eventName = ["StopLogging", "DeleteTrail", "UpdateTrail", "PutEventSelectors"]
+        }
+      }
+    }
+  }
 }
 
-resource "aws_cloudwatch_event_target" "lambda" {
-  rule = aws_cloudwatch_event_rule.s3_public.name
+resource "aws_cloudwatch_event_rule" "detection" {
+  for_each = local.event_rules
+
+  name          = "${var.project_name}-${each.key}-events"
+  description   = each.value.description
+  event_pattern = jsonencode(each.value.pattern)
+}
+
+resource "aws_cloudwatch_event_target" "detection" {
+  for_each = local.event_rules
+
+  rule = aws_cloudwatch_event_rule.detection[each.key].name
   arn  = aws_lambda_function.detection.arn
 }
 
-# EventBridge mag deze functie aanroepen, maar alleen vanuit precies deze rule.
-resource "aws_lambda_permission" "eventbridge" {
-  statement_id  = "AllowEventBridgeInvoke"
+# EventBridge mag deze functie aanroepen, maar alleen vanuit precies deze rules.
+resource "aws_lambda_permission" "detection" {
+  for_each = local.event_rules
+
+  statement_id  = "AllowEventBridge-${each.key}"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.detection.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.s3_public.arn
+  source_arn    = aws_cloudwatch_event_rule.detection[each.key].arn
+}
+
+# De bestaande s3-rule verhuist alleen van adres binnen de state; zonder deze
+# moved-blocks zou Terraform hem afbreken en opnieuw aanmaken.
+moved {
+  from = aws_cloudwatch_event_rule.s3_public
+  to   = aws_cloudwatch_event_rule.detection["s3-public"]
+}
+
+moved {
+  from = aws_cloudwatch_event_target.lambda
+  to   = aws_cloudwatch_event_target.detection["s3-public"]
+}
+
+moved {
+  from = aws_lambda_permission.eventbridge
+  to   = aws_lambda_permission.detection["s3-public"]
+}
+
+# ---------------------------------------------------------------------------
+# De dagelijkse audit (IAM-KEY-005): een schedule is geen CloudTrail-event,
+# dus een eigen rule. De handler herkent detail-type "Scheduled Event".
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_event_rule" "daily_audit" {
+  name                = "${var.project_name}-daily-audit"
+  description         = "Dagelijkse toestandsaudit (o.a. verouderde IAM-keys)."
+  schedule_expression = "rate(1 day)"
+}
+
+resource "aws_cloudwatch_event_target" "daily_audit" {
+  rule = aws_cloudwatch_event_rule.daily_audit.name
+  arn  = aws_lambda_function.detection.arn
+}
+
+resource "aws_lambda_permission" "daily_audit" {
+  statement_id  = "AllowEventBridge-daily-audit"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.detection.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.daily_audit.arn
 }
