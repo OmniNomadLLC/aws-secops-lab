@@ -18,6 +18,45 @@ logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 5  # Lambda betaalt per ms; niet eindeloos op een dood endpoint wachten.
 
+# ntfy-prioriteit en -emoji per severity (zelfde stijl als de sanity-scan).
+NTFY_PRIORITY = {"CRITICAL": "urgent", "HIGH": "high", "MEDIUM": "default", "LOW": "low"}
+NTFY_TAGS = {"CRITICAL": "rotating_light", "HIGH": "rotating_light",
+             "MEDIUM": "warning", "LOW": "information_source"}
+
+
+def _ntfy_request(finding: Finding, endpoint: str) -> urllib.request.Request:
+    """ntfy wil een leesbaar bericht met headers, geen JSON-blob.
+
+    Het topic in de URL is effectief het wachtwoord (ntfy.sh is publiek),
+    vandaar dat het endpoint via TF_VAR_alert_endpoint buiten de repo blijft.
+    """
+    body = "\n".join(filter(None, [
+        f"{finding.resource}",
+        f"door {finding.actor}",
+        f"{finding.event_name} · {finding.region} · {finding.event_time}",
+        # details compact erbij; de volledige payload staat altijd in CloudWatch
+        json.dumps(finding.details, default=str)[:500] if finding.details else "",
+    ]))
+    return urllib.request.Request(
+        endpoint,
+        data=body.encode("utf-8"),
+        headers={
+            "Title": f"[{finding.severity}] {finding.title}",
+            "Priority": NTFY_PRIORITY.get(finding.severity, "default"),
+            "Tags": f"shield,{NTFY_TAGS.get(finding.severity, 'warning')}",
+        },
+        method="POST",
+    )
+
+
+def _json_request(payload: dict, endpoint: str) -> urllib.request.Request:
+    return urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
 
 def send_alert(finding: Finding, endpoint: str | None = None) -> bool:
     """Stuurt één finding als JSON POST. Geeft True terug bij succes.
@@ -38,12 +77,11 @@ def send_alert(finding: Finding, endpoint: str | None = None) -> bool:
         logger.error("ALERT_ENDPOINT is geen https-URL; alert niet verstuurd.")
         return False
 
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    # ALERT_FORMAT bepaalt de vorm: "ntfy" = leesbare push, anders JSON-webhook.
+    if os.environ.get("ALERT_FORMAT", "json") == "ntfy":
+        request = _ntfy_request(finding, endpoint)
+    else:
+        request = _json_request(payload, endpoint)
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             ok = 200 <= response.status < 300

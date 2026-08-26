@@ -22,3 +22,9 @@ variable "budget_alert_email" {
   type        = string
   sensitive   = true
 }
+
+variable "alert_format" {
+  description = "Alertvorm: json (webhook) of ntfy (push naar de ntfy-app, zelfde patroon als de sanity-scan)."
+  type        = string
+  default     = "json"
+}

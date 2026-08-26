@@ -74,6 +74,7 @@ resource "aws_lambda_function" "detection" {
   environment {
     variables = {
       ALERT_ENDPOINT = var.alert_endpoint
+      ALERT_FORMAT   = var.alert_format
     }
   }
 

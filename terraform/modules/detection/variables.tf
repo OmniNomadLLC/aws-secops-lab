@@ -25,3 +25,14 @@ variable "log_retention_days" {
   type        = number
   default     = 365
 }
+
+variable "alert_format" {
+  description = "Vorm van de alert: \"json\" (generieke webhook) of \"ntfy\" (leesbare push met Title/Priority/Tags)."
+  type        = string
+  default     = "json"
+
+  validation {
+    condition     = contains(["json", "ntfy"], var.alert_format)
+    error_message = "alert_format moet json of ntfy zijn."
+  }
+}
