@@ -24,7 +24,7 @@ leren. Het mikt bewust op precies de skills die security-automation-rollen vrage
   │  Lambda secops-lab-detection (Python, arm64)         │
   │    • regels evalueren (fijn filter)                  │
   │    • verrijken met actuele resource-status           │
-  │    • alert → HTTPS-endpoint (ALERT_ENDPOINT)         │
+  │    • alert → HTTPS-endpoint (ntfy-push of JSON)            │
   │    • mislukte events → SQS-DLQ                       │
   └──────────────────────────────────────────────────────┘
 ```
@@ -81,7 +81,7 @@ maken en echt genoeg om te laten zien.
 | AWS | S3, IAM, KMS, CloudTrail, Lambda, EventBridge, SQS, X-Ray, Budgets |
 | IAM | least-privilege rollen per functie: exacte acties op exacte resources, elke wildcard gemotiveerd in de code |
 | Python | detectie-engine + 38 unit tests (moto) in `lambda/` |
-| REST APIs | findings als JSON-POST naar een HTTPS-endpoint (Telegram-webhook) |
+| REST APIs | findings als JSON-webhook of ntfy-push naar een HTTPS-endpoint |
 | DevSecOps | CI scant de IaC met tfsec en checkov en draait pytest vóór er iets uitrolt |
 
 ## Scanner-beleid
@@ -101,7 +101,7 @@ tfsec en checkov zijn groen. Vindingen kennen drie uitkomsten, nooit stil onderd
 | 1 | Backend, CloudTrail-stack, budget, CI met scanners | ✅ 2026-08-24 |
 | 2 | Detectie-Lambda + regel 1 (publieke S3-bucket), moto-tests, module met least-privilege rol | ✅ 2026-08-24, live bewezen |
 | 3 | Regels 2 t/m 5 + dagelijkse audit-schedule | ✅ 2026-08-24, live bewezen |
-| 4 | Telegram-alerts end-to-end op de telefoon | ⏳ wacht op webhook-URL |
+| 4 | Alerts end-to-end op de telefoon (ntfy) | ✅ 2026-08-26, live bewezen |
 | 5 | (opgeschoven) verdieping: cross-region root-events, SG-audit | |
 | 6 | Documentatie: architectuur, threat model, README | ✅ dit document |
 | 7 | `terraform destroy`, kosten op nul, repo publiek | |
