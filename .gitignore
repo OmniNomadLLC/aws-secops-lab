@@ -22,3 +22,7 @@ venv/
 *.pem
 credentials
 terraform/modules/detection/.build/
+
+# Lokaal-only projectdocs, nooit publiek (zie ~/projects/REPO-PUBLIC-CHECKLIST.md)
+docs/
+CLAUDE.md
