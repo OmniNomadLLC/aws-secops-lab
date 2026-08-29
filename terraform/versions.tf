@@ -28,3 +28,19 @@ provider "aws" {
     }
   }
 }
+
+# Aliased provider voor us-east-1: globale CloudTrail-events (root-console-
+# sign-ins, IAM-calls) landen alleen daar; de detection-module forwardt ze
+# naar de thuisregio (zie modules/detection/global_events.tf).
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project   = "aws-secops-lab"
+      ManagedBy = "terraform"
+      Owner     = "lynn"
+    }
+  }
+}

@@ -95,10 +95,9 @@ resource "aws_lambda_function" "detection" {
 # geen invocaties. Eén map met patronen, for_each maakt er rules van:
 # een regel toevoegen = een entry toevoegen.
 #
-# Beperking (bewust geaccepteerd): globale events zoals console-sign-ins en
-# IAM-calls landen op de EventBridge-bus in us-east-1, niet hier. De
-# root-rule vangt dus root-API-calls in deze regio; cross-region forwarding
-# vanaf us-east-1 staat op de lijst voor later.
+# Globale events (console-sign-ins, IAM-calls) landen op de EventBridge-bus
+# in us-east-1; global_events.tf forwardt ze naar de default bus hier, waar
+# de root-activity-rule ze oppikt. De beperking van dag 3 is daarmee gedicht.
 # ---------------------------------------------------------------------------
 
 locals {
@@ -124,7 +123,7 @@ locals {
       }
     }
     "root-activity" = {
-      description = "Elke actie van het root-account (regionale events; zie beperking hierboven)."
+      description = "Elke actie van het root-account, incl. geforwarde globale events uit us-east-1."
       pattern = {
         detail-type = ["AWS API Call via CloudTrail", "AWS Console Sign In via CloudTrail"]
         detail = {

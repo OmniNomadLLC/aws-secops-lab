@@ -7,6 +7,11 @@ module "cloudtrail" {
 module "detection" {
   source = "./modules/detection"
 
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
   project_name      = var.project_name
   alert_endpoint    = var.alert_endpoint
   alert_format      = var.alert_format
