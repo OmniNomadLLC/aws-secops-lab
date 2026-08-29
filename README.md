@@ -1,130 +1,134 @@
 # aws-secops-lab
 
-Event-driven securitydetectie op AWS: volledig in Terraform, detectielogica in Python,
-gescand en getest in CI vóór elke uitrol.
+Event-driven security detection on AWS: fully in Terraform, detection logic in Python,
+scanned and tested in CI before every rollout.
 
-Doel: van "AWS en Terraform staan op mijn profiel" naar "hier is de repo, met commits en datums".
-Dit project is er om de skills op de XpertDirect-kaart en het cv echt waar te maken, en om te
-leren. Het mikt bewust op precies de skills die security-automation-rollen vragen.
+Goal: from "AWS and Terraform are listed on my profile" to "here is the repo, with commits and
+dates". This project was built to turn claimed AWS/Terraform skills into verifiable evidence,
+and to learn. It deliberately targets exactly the skill set that security-automation roles
+ask for.
 
-## Architectuur
+> Code comments and commit messages are in Dutch (this was also a learning journal); the
+> README, architecture and threat model below tell the full story in English.
+
+## Architecture
 
 ```
-                       AWS-account
+                       AWS account
   ┌──────────────────────────────────────────────────────┐
-  │  API-call (S3 / EC2 / IAM / root / CloudTrail)       │
+  │  API call (S3 / EC2 / IAM / root / CloudTrail)       │
   │        │                                             │
   │        ▼                                             │
   │  CloudTrail (multi-region, CMK, log validation)      │
   │        │                                             │
   │        ▼                                             │
-  │  EventBridge ── 4 patroonrules + 1 dagelijkse        │
-  │        │        schedule (grof filter bij AWS)       │
+  │  EventBridge ── 4 pattern rules + 1 daily            │
+  │        │        schedule (coarse filter at AWS)      │
   │        ▼                                             │
   │  Lambda secops-lab-detection (Python, arm64)         │
-  │    • regels evalueren (fijn filter)                  │
-  │    • verrijken met actuele resource-status           │
-  │    • alert → HTTPS-endpoint (ntfy-push of JSON)            │
-  │    • mislukte events → SQS-DLQ                       │
+  │    • evaluate rules (fine filter)                    │
+  │    • enrich with current resource state              │
+  │    • alert → HTTPS endpoint (ntfy push or JSON)      │
+  │    • failed events → SQS DLQ                         │
   └──────────────────────────────────────────────────────┘
 ```
 
-Het grove filter (welke eventNames überhaupt relevant zijn) zit in de EventBridge-patronen,
-dus irrelevante calls kosten geen Lambda-invocaties. Het fijne oordeel (is deze
-`PutBucketAcl` echt publiek?) zit in Python, waar het unit-testbaar is.
+The coarse filter (which eventNames are relevant at all) lives in the EventBridge patterns,
+so irrelevant calls cost no Lambda invocations. The fine judgment (is this `PutBucketAcl`
+really public?) lives in Python, where it is unit-testable.
 
-## Detectieregels
+## Detection rules
 
-| Regel | Wat | Severity | Live bewezen |
+| Rule | What | Severity | Proven live |
 |---|---|---|---|
-| S3-PUBLIC-001 | bucket publiek via ACL, policy met `Principal:*`, of public-access-block weg/verzwakt | HIGH/MEDIUM | finding 10 s na PAB-verzwakking |
-| IAM-ROOT-002 | elk handmatig root-gebruik (AWS-service-acties uitgezonderd) | HIGH | unit tests |
-| EC2-SG-003 | security group open naar 0.0.0.0/0 of ::/0; HIGH op beheer-/db-poorten of al het verkeer | HIGH/MEDIUM | finding 3 s na wereld-open SSH |
-| CT-TAMPER-004 | CloudTrail gestopt/verwijderd (CRITICAL) of aangepast (HIGH) | CRITICAL/HIGH | unit tests |
-| IAM-KEY-005 | actieve access key >90 dagen; HIGH als de user geen MFA heeft (dagelijkse audit) | HIGH/MEDIUM | vond direct 3 echte stale keys |
+| S3-PUBLIC-001 | bucket made public via ACL, policy with `Principal:*`, or public access block removed/weakened | HIGH/MEDIUM | finding 10 s after weakening the PAB |
+| IAM-ROOT-002 | any manual root usage (AWS service actions excluded) | HIGH | unit tests |
+| EC2-SG-003 | security group open to 0.0.0.0/0 or ::/0; HIGH on management/db ports or all traffic | HIGH/MEDIUM | finding 3 s after world-open SSH |
+| CT-TAMPER-004 | CloudTrail stopped/deleted (CRITICAL) or modified (HIGH) | CRITICAL/HIGH | unit tests |
+| IAM-KEY-005 | active access key >90 days; HIGH if the user has no MFA (daily audit) | HIGH/MEDIUM | immediately found 3 real stale keys |
 
-Regels zijn data: een lijst functies in `lambda/src/rules.py` (events) en `lambda/src/audit.py`
-(geplande toestandschecks). Een regel toevoegen = één functie + één EventBridge-patroonentry +
+Rules are data: a list of functions in `lambda/src/rules.py` (events) and `lambda/src/audit.py`
+(scheduled state checks). Adding a rule = one function + one EventBridge pattern entry +
 tests.
 
-## Threat model (kort)
+## Threat model (short)
 
-**Wat beschermen we:** de integriteit van het AWS-account zelf: geen stille publieke data-
-exposure, geen onopgemerkt gebruik van te machtige credentials, geen uitgeschakelde audit-trail.
+**What we protect:** the integrity of the AWS account itself: no silent public data
+exposure, no unnoticed use of overly powerful credentials, no disabled audit trail.
 
-**Tegen wie/wat:**
+**Against whom/what:**
 
-| Dreiging | Detectie | Beperking |
+| Threat | Detection | Limitation |
 |---|---|---|
-| Gelekte key maakt een bucket publiek (exfiltratie-voorbereiding) | S3-PUBLIC-001, binnen seconden | detectie ≠ preventie; de vangrail zelf is het account-brede public-access-block |
-| Aanvaller met rootcredentials | IAM-ROOT-002 | console-sign-ins landen als globaal event in us-east-1; deze stack vangt regionale root-API-calls. Cross-region forwarding staat op de roadmap |
-| Beheerpoort open naar het internet (instap voor brute force) | EC2-SG-003 | alleen `AuthorizeSecurityGroupIngress`; bestaande oude regels vangt alleen een (toekomstige) audit |
-| Aanvaller zet de camera's uit vóór de inbraak | CT-TAMPER-004 | als de aanvaller ook de Lambda/EventBridge kan slopen is de detectie zelf het doelwit; dat vergt org-level guardrails (SCP's), buiten scope van één account |
-| Verouderde, MFA-loze credentials als stille achterdeur | IAM-KEY-005, dagelijks | audit draait 1x/dag; een key die 's ochtends lekt zie je pas 's nachts |
+| Leaked key makes a bucket public (exfiltration preparation) | S3-PUBLIC-001, within seconds | detection is not prevention; the guardrail itself is the account-wide public access block |
+| Attacker with root credentials | IAM-ROOT-002 | console sign-ins land as a global event in us-east-1; this stack catches regional root API calls. Cross-region forwarding is on the roadmap |
+| Management port open to the internet (entry point for brute force) | EC2-SG-003 | only `AuthorizeSecurityGroupIngress`; existing old rules are only caught by a (future) audit |
+| Attacker turns off the cameras before the break-in | CT-TAMPER-004 | if the attacker can also destroy the Lambda/EventBridge, the detection itself is the target; that requires org-level guardrails (SCPs), out of scope for a single account |
+| Stale, MFA-less credentials as a silent backdoor | IAM-KEY-005, daily | the audit runs once per day; a key that leaks in the morning is only seen at night |
 
-**Aannames:** de deploy-user is vertrouwd; de state-bucket is versleuteld en niet publiek;
-alerts bevatten accountnummer en resourcenamen en gaan daarom uitsluitend over https.
+**Assumptions:** the deploy user is trusted; the state bucket is encrypted and not public;
+alerts contain the account number and resource names and therefore go over https only.
 
-**Detectie beschermt zichzelf:** trail-tampering is zelf een CRITICAL-regel, de Lambda-rol kan
-niets aanmaken of wijzigen (alleen lezen + loggen + eigen DLQ), en mislukte events bewaart de
-DLQ 14 dagen.
+**Detection protects itself:** trail tampering is itself a CRITICAL rule, the Lambda role can
+create or modify nothing (read + log + its own DLQ only), and the DLQ retains failed events
+for 14 days.
 
-## Waarom dit project en niet iets anders
+## Why this project and not something else
 
-Job 1924 (Security Automation Engineer, Duitsland) vroeg: Python, AWS, Terraform, IAM,
-REST APIs, DevSecOps. Dit project raakt alle zes in een opzet die klein genoeg is om af te
-maken en echt genoeg om te laten zien.
+Security-automation roles ask for: Python, AWS, Terraform, IAM, REST APIs, DevSecOps. This
+project touches all six in a setup small enough to finish and real enough to show.
 
-| Gevraagde skill | Waar die hier zit |
+| Skill asked for | Where it lives here |
 |---|---|
-| Terraform | de volledige infra in `terraform/`, modules, S3-backend met locking, niets met de hand aangeklikt |
+| Terraform | the full infrastructure in `terraform/`, modules, S3 backend with locking, nothing clicked together by hand |
 | AWS | S3, IAM, KMS, CloudTrail, Lambda, EventBridge, SQS, X-Ray, Budgets |
-| IAM | least-privilege rollen per functie: exacte acties op exacte resources, elke wildcard gemotiveerd in de code |
-| Python | detectie-engine + 38 unit tests (moto) in `lambda/` |
-| REST APIs | findings als JSON-webhook of ntfy-push naar een HTTPS-endpoint |
-| DevSecOps | CI scant de IaC met tfsec en checkov en draait pytest vóór er iets uitrolt |
+| IAM | least-privilege roles per function: exact actions on exact resources, every wildcard justified in the code |
+| Python | detection engine + 38 unit tests (moto) in `lambda/` |
+| REST APIs | findings as a JSON webhook or ntfy push to an HTTPS endpoint |
+| DevSecOps | CI scans the IaC with tfsec and checkov and runs pytest before anything rolls out |
 
-## Scanner-beleid
+## Scanner policy
 
-tfsec en checkov zijn groen. Vindingen kennen drie uitkomsten, nooit stil onderdrukken:
+tfsec and checkov are green. Findings have three possible outcomes, never silent suppression:
 
-1. **Echt oplossen** — CMK-encryptie, X-Ray, DLQ, retentie 365d, EventBridge-notificaties.
-2. **Eerlijk voldoen zonder kosten** — SSE-SQS op de DLQ, arm64.
-3. **Beargumenteerd afwijzen** — de motivatie staat als comment op de skip-regel ín de code
-   (KMS-key-policy false positives, onmogelijke reserved concurrency door accountquota,
-   noodzakelijke wildcards voor detectie-reads).
+1. **Actually fix it**: CMK encryption, X-Ray, DLQ, 365d retention, EventBridge notifications.
+2. **Comply honestly at no cost**: SSE-SQS on the DLQ, arm64.
+3. **Reject with an argument**: the rationale sits as a comment on the skip line in the code
+   itself (KMS key policy false positives, reserved concurrency made impossible by account
+   quotas, wildcards necessary for detection reads).
 
-## Weekplan
+## Week plan
 
-| Dag | Doel | Status |
+| Day | Goal | Status |
 |---|---|---|
-| 1 | Backend, CloudTrail-stack, budget, CI met scanners | ✅ 2026-08-24 |
-| 2 | Detectie-Lambda + regel 1 (publieke S3-bucket), moto-tests, module met least-privilege rol | ✅ 2026-08-24, live bewezen |
-| 3 | Regels 2 t/m 5 + dagelijkse audit-schedule | ✅ 2026-08-24, live bewezen |
-| 4 | Alerts end-to-end op de telefoon (ntfy) | ✅ 2026-08-26, live bewezen |
-| 5 | (opgeschoven) verdieping: cross-region root-events, SG-audit | |
-| 6 | Documentatie: architectuur, threat model, README | ✅ dit document |
-| 7 | `terraform destroy`, kosten op nul, repo publiek | |
+| 1 | Backend, CloudTrail stack, budget, CI with scanners | ✅ 2026-08-24 |
+| 2 | Detection Lambda + rule 1 (public S3 bucket), moto tests, module with least-privilege role | ✅ 2026-08-24, proven live |
+| 3 | Rules 2 through 5 + daily audit schedule | ✅ 2026-08-24, proven live |
+| 4 | Alerts end-to-end on the phone (ntfy) | ✅ 2026-08-26, proven live |
+| 5 | (deferred) deepening: cross-region root events, SG audit | |
+| 6 | Documentation: architecture, threat model, README | ✅ this document |
+| 7 | `terraform destroy`, costs to zero, repo public | ✅ 2026-08-27: infra destroyed, costs verified at $0.00, repo made public |
 
-## Zusterproject
+## Sibling project
 
-On-demand in plaats van event-driven: https://github.com/OmniNomadLLC/aws-audit-mcp
-biedt dezelfde audit-domeinen als read-only MCP-tools aan AI-agents.
+On-demand instead of event-driven: https://github.com/OmniNomadLLC/aws-audit-mcp
+offers the same audit domains as read-only MCP tools to AI agents.
 
-## Draaien
+## Running it
 
 ```bash
 export AWS_PROFILE=secops-lab
-export TF_VAR_budget_alert_email=...   # nooit in de repo
-export TF_VAR_alert_endpoint=...       # https, optioneel: leeg = log-only
+export TF_VAR_budget_alert_email=...   # never in the repo
+export TF_VAR_alert_endpoint=...       # https, optional: empty = log-only
 terraform -chdir=terraform init
 terraform -chdir=terraform plan
 pytest lambda -q
 ```
 
-## Kosten
+## Costs
 
-Vrijwel alles binnen free tier: één gratis CloudTrail-trail, Lambda 1M requests/maand gratis,
-X-Ray 100k traces gratis, SQS/EventBridge verwaarloosbaar. De enige vaste post is de CMK
-(~$1/maand, bewust: échte encryptie in plaats van scanner-suppressie). Maandbudget van $10 met
-e-mailalerts staat als vangnet in Terraform. Aan het eind: `terraform destroy` en alles op nul.
+Nearly everything within the free tier: one free CloudTrail trail, Lambda 1M requests/month
+free, X-Ray 100k traces free, SQS/EventBridge negligible. The only fixed cost is the CMK
+(~$1/month, deliberately: real encryption instead of scanner suppression). A $10 monthly
+budget with email alerts sits in Terraform as a safety net. At the end: `terraform destroy`
+and everything back to zero.
