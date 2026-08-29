@@ -106,6 +106,11 @@ tfsec en checkov zijn groen. Vindingen kennen drie uitkomsten, nooit stil onderd
 | 6 | Documentatie: architectuur, threat model, README | ✅ dit document |
 | 7 | `terraform destroy`, kosten op nul, repo publiek | |
 
+## Zusterproject
+
+On-demand in plaats van event-driven: https://github.com/OmniNomadLLC/aws-audit-mcp
+biedt dezelfde audit-domeinen als read-only MCP-tools aan AI-agents.
+
 ## Draaien
 
 ```bash
