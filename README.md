@@ -13,24 +13,15 @@ ask for.
 
 ## Architecture
 
-```
-                       AWS account
-  ┌──────────────────────────────────────────────────────┐
-  │  API call (S3 / EC2 / IAM / root / CloudTrail)       │
-  │        │                                             │
-  │        ▼                                             │
-  │  CloudTrail (multi-region, CMK, log validation)      │
-  │        │                                             │
-  │        ▼                                             │
-  │  EventBridge ── 4 pattern rules + 1 daily            │
-  │        │        schedule (coarse filter at AWS)      │
-  │        ▼                                             │
-  │  Lambda secops-lab-detection (Python, arm64)         │
-  │    • evaluate rules (fine filter)                    │
-  │    • enrich with current resource state              │
-  │    • alert → HTTPS endpoint (ntfy push or JSON)      │
-  │    • failed events → SQS DLQ                         │
-  └──────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A[API call: S3 / EC2 / IAM / root / CloudTrail] --> B[CloudTrail\nmulti-region, CMK, log validation]
+    B --> C[EventBridge\n4 pattern rules + 1 daily schedule\ncoarse filter at AWS]
+    C --> D[Lambda secops-lab-detection\nPython, arm64]
+    D --> E[evaluate rules: fine filter]
+    E --> F[enrich with current resource state]
+    F --> G[alert: ntfy push or JSON webhook]
+    D -. failed events .-> H[(SQS DLQ, 14 days)]
 ```
 
 The coarse filter (which eventNames are relevant at all) lives in the EventBridge patterns,
@@ -86,6 +77,12 @@ project touches all six in a setup small enough to finish and real enough to sho
 | Python | detection engine + 38 unit tests (moto) in `lambda/` |
 | REST APIs | findings as a JSON webhook or ntfy push to an HTTPS endpoint |
 | DevSecOps | CI scans the IaC with tfsec and checkov and runs pytest before anything rolls out |
+
+## Method note
+
+Built AI-assisted, with the discipline that makes that safe: every change had to pass the
+full test suite, tfsec, checkov and CI before landing, and every detection claim above was
+proven against a live account before it went in this README.
 
 ## Scanner policy
 
